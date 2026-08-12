@@ -1,17 +1,23 @@
 // Package routersource is a build-time drop-in: a deploy step regenerates
 // this single file to point at whichever chi-router-providing repo should
 // back this deployment. main.go's import of this package never changes;
-// only the body below does. This is the current default, wired to
-// github-device-auth's router.
+// only the body below does.
+//
+// Checked in, this is the default: a minimal stdlib http.ServeMux with a
+// health check and nothing else, so this repo builds, tests, and deploys
+// standalone with no external router dependency until something overrides
+// it (see the prep-router action).
 package routersource
 
-import (
-	"net/http"
+import "net/http"
 
-	router "github.com/dash-xd/github-device-auth/router"
-)
-
-// NewRouter returns the chi router for this deployment.
+// NewRouter returns the router for this deployment.
 func NewRouter() http.Handler {
-	return router.NewRouter()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})
+
+	return mux
 }
