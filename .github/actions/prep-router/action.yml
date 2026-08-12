@@ -1,0 +1,46 @@
+name: Prep router
+description: >-
+  Points this shell's generic router alias (gospace.invalid/router, the
+  fixed import main.go always uses) at a specific chi-router-providing
+  Go module and version, by rewriting the go.mod replace directive.
+  Run this before building/deploying the Cloud Function.
+
+inputs:
+  router-module:
+    description: >-
+      Go module path of the package exposing NewRouter, e.g.
+      github.com/dash-xd/github-device-auth/router.
+    required: true
+  router-version:
+    description: >-
+      Version to pin the router module to: a semver tag, branch name, or
+      commit SHA. Passed straight through to `go get`/`go mod edit`.
+    required: true
+  working-directory:
+    description: Directory containing this shell's go.mod.
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ inputs.working-directory }}/go.mod
+
+    - name: Point the router alias at the target module
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        go mod edit -replace \
+          "gospace.invalid/router=${{ inputs.router-module }}@${{ inputs.router-version }}"
+
+        go mod tidy
+
+    - name: Verify the shell builds against the resolved router
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go build ./...
