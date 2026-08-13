@@ -1,0 +1,80 @@
+name: Run locally
+description: >-
+  Runs this shell's function.Main locally over plain HTTP (cmd/localserve),
+  without the GCP Cloud Functions buildpack/Functions Framework. Run the
+  prep-router action first to point internal/routersource at the router
+  you want to test. Starts the server in the background and waits for it
+  to accept connections; pair with run-local-stop once done with it.
+
+inputs:
+  working-directory:
+    description: Directory containing this shell's go.mod.
+    required: false
+    default: "."
+  host:
+    description: Host/interface to bind to.
+    required: false
+    default: "127.0.0.1"
+  port:
+    description: Port to listen on.
+    required: false
+    default: "8080"
+  ready-path:
+    description: >-
+      Path to probe (with a POST) to detect the server is up. Any HTTP
+      response counts as ready, even an error status - only a connection
+      failure keeps polling - so this doesn't need to be a route your
+      prepped router actually implements.
+    required: false
+    default: "/"
+  ready-timeout-seconds:
+    description: How long to wait for the server to start accepting connections.
+    required: false
+    default: "30"
+
+outputs:
+  base-url:
+    description: Base URL the server is listening on, e.g. http://127.0.0.1:8080
+    value: ${{ steps.start.outputs.base-url }}
+  pid-file:
+    description: >-
+      Path to a file containing the server's PID, for run-local-stop to
+      kill later.
+    value: ${{ steps.start.outputs.pid-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Start server
+      id: start
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        HOST: ${{ inputs.host }}
+        PORT: ${{ inputs.port }}
+        READY_PATH: ${{ inputs.ready-path }}
+        READY_TIMEOUT_SECONDS: ${{ inputs.ready-timeout-seconds }}
+      run: |
+        set -euo pipefail
+
+        go run ./cmd/localserve > localserve.log 2>&1 &
+        pid=$!
+
+        pid_file="$(pwd)/localserve.pid"
+        echo "$pid" > "$pid_file"
+
+        base_url="http://${HOST}:${PORT}"
+
+        for _ in $(seq 1 "$READY_TIMEOUT_SECONDS"); do
+          if curl -s -o /dev/null -X POST "${base_url}${READY_PATH}"; then
+            echo "server is up at ${base_url}"
+            echo "base-url=${base_url}" >>"$GITHUB_OUTPUT"
+            echo "pid-file=${pid_file}" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sleep 1
+        done
+
+        echo "::error::server never came up on ${base_url}"
+        cat localserve.log >&2 || true
+        exit 1
