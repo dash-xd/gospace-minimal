@@ -33,7 +33,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    host + ":" + port,
-		Handler: http.HandlerFunc(function.Main),
+		Handler: function.Main,
 	}
 
 	serveErr := make(chan error, 1)
