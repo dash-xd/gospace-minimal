@@ -1,0 +1,162 @@
+name: Router
+description: >-
+  Points this shell at a router (the default built-in stdlib mux, or a
+  remote chi-router-providing Go package) by regenerating
+  internal/routersource/source.go via cmd/genrouter, then optionally runs
+  the prepped function.Main locally over plain HTTP (cmd/localserve),
+  without the GCP Cloud Functions buildpack/Functions Framework. Pair
+  run-local with the run-local-stop action once done with it.
+
+inputs:
+  router-source:
+    description: >-
+      Which router to wire in. "default" resets source.go to the
+      built-in stdlib mux with a health check and no external
+      dependency. "remote" points it at router-package instead.
+    required: false
+    default: "default"
+  router-package:
+    description: >-
+      Import path of the package exposing NewRouter(), e.g.
+      github.com/dash-xd/github-device-auth/router. Required when
+      router-source is "remote"; ignored otherwise.
+    required: false
+    default: ""
+  router-version:
+    description: >-
+      Optional version to pin router-package's module to: a semver tag
+      or a full commit SHA. Only used when router-source is "remote".
+      Leave unset to resolve the latest version automatically (go mod
+      tidy adds the new import at whatever's newest once source.go is
+      regenerated to reference it) — that means the tip of the module's
+      default branch for repos with no tags yet, so the router package
+      needs to actually be on that branch. (Branch names containing "/"
+      aren't accepted as a `go get` version query, so pin to a tag or
+      commit SHA if you need one of those.)
+    required: false
+    default: ""
+  run-local:
+    description: >-
+      After preparing the router, also start it locally in the
+      background and wait for it to accept connections.
+    required: false
+    default: "false"
+  working-directory:
+    description: Directory containing this shell's go.mod.
+    required: false
+    default: "."
+  host:
+    description: "run-local only: host/interface to bind to."
+    required: false
+    default: "127.0.0.1"
+  port:
+    description: "run-local only: port to listen on."
+    required: false
+    default: "8080"
+  ready-path:
+    description: >-
+      run-local only: path to probe (with a POST) to detect the server
+      is up. Any HTTP response counts as ready, even an error status -
+      only a connection failure keeps polling - so this doesn't need to
+      be a route the prepped router actually implements.
+    required: false
+    default: "/"
+  ready-timeout-seconds:
+    description: "run-local only: how long to wait for the server to start accepting connections."
+    required: false
+    default: "30"
+
+outputs:
+  base-url:
+    description: >-
+      run-local only: base URL the server is listening on, e.g.
+      http://127.0.0.1:8080
+    value: ${{ steps.start.outputs.base-url }}
+  pid-file:
+    description: >-
+      run-local only: path to a file containing the server's PID, for
+      run-local-stop to kill later.
+    value: ${{ steps.start.outputs.pid-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ inputs.working-directory }}/go.mod
+
+    - name: Validate inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${{ inputs.router-source }}" == "remote" && -z "${{ inputs.router-package }}" ]]; then
+          echo "::error::router-package is required when router-source is 'remote'"
+          exit 1
+        fi
+
+    - name: Regenerate the router source drop-in
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        go run ./cmd/genrouter -router-package="${{ inputs.router-source == 'remote' && inputs.router-package || '' }}"
+
+    - name: Pin go.mod to the requested version
+      if: ${{ inputs.router-source == 'remote' && inputs.router-version != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go get "${{ inputs.router-package }}@${{ inputs.router-version }}"
+
+    - name: Tidy and verify the shell builds against the resolved router
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # GOPROXY=direct: when router-source is "remote" and router-version
+      # is unset, this tidy is what actually resolves "latest" for
+      # router-package. proxy.golang.org caches that resolution for
+      # untagged modules, so a build run shortly after a fresh push can
+      # otherwise silently get a stale commit even though the real repo
+      # has already moved. Going direct to the VCS host for this step
+      # avoids that; GOSUMDB checksum verification still applies since
+      # it's keyed by exact version, not by the ambiguous "latest"
+      # pointer, so this doesn't weaken that.
+      env:
+        GOPROXY: ${{ inputs.router-source == 'remote' && 'direct' || '' }}
+      run: |
+        go mod tidy
+        go build ./...
+
+    - name: Start server
+      id: start
+      if: ${{ inputs.run-local == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        HOST: ${{ inputs.host }}
+        PORT: ${{ inputs.port }}
+        READY_PATH: ${{ inputs.ready-path }}
+        READY_TIMEOUT_SECONDS: ${{ inputs.ready-timeout-seconds }}
+      run: |
+        set -euo pipefail
+
+        go run ./cmd/localserve > localserve.log 2>&1 &
+        pid=$!
+
+        pid_file="$(pwd)/localserve.pid"
+        echo "$pid" > "$pid_file"
+
+        base_url="http://${HOST}:${PORT}"
+
+        for _ in $(seq 1 "$READY_TIMEOUT_SECONDS"); do
+          if curl -s -o /dev/null -X POST "${base_url}${READY_PATH}"; then
+            echo "server is up at ${base_url}"
+            echo "base-url=${base_url}" >>"$GITHUB_OUTPUT"
+            echo "pid-file=${pid_file}" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sleep 1
+        done
+
+        echo "::error::server never came up on ${base_url}"
+        cat localserve.log >&2 || true
+        exit 1
