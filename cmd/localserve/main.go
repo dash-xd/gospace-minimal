@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	function "github.com/dash-xd/gospace-minimal"
+	function "github.com/dash-xd/gospace-minimal/function"
 )
 
 func main() {
@@ -33,7 +33,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    host + ":" + port,
-		Handler: http.HandlerFunc(function.Main),
+		Handler: function.Main,
 	}
 
 	serveErr := make(chan error, 1)

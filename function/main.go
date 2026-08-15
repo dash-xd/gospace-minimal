@@ -6,14 +6,8 @@
 package function
 
 import (
-	"net/http"
-
 	newrouter "github.com/dash-xd/gospace-minimal/internal/routersource"
 )
 
-var r = newrouter.NewRouter()
-
 // Main is the exported entry point invoked by the Cloud Functions runtime.
-func Main(w http.ResponseWriter, req *http.Request) {
-	r.ServeHTTP(w, req)
-}
+var Main = newrouter.Serve()
