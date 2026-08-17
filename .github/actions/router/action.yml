@@ -1,7 +1,7 @@
 name: Router
 description: >-
   Points this shell's router at a custom implementation by overwriting
-  internal/routersource/source.go before building, then optionally runs
+  internal/routersource/source/source.go before building, then optionally runs
   the prepped function.Main locally over plain HTTP (cmd/localserve),
   without the GCP Cloud Functions buildpack/Functions Framework. Pair
   run-local with the run-local-stop action once done with it. Leave both
@@ -12,8 +12,9 @@ inputs:
   source-file:
     description: >-
       Path (relative to working-directory, or absolute) to a Go file to
-      copy over internal/routersource/source.go before building. Typical
-      use: check out a repo that owns a custom routersource/source.go
+      copy over internal/routersource/source/source.go before building. Typical
+      use: check out a repo that owns a custom
+      internal/routersource/source/source.go
       (composing in whatever router packages it wants, in plain Go) and
       point this at that checkout. Mutually exclusive with
       source-content.
@@ -21,7 +22,7 @@ inputs:
     default: ""
   source-content:
     description: >-
-      Literal Go source to write to internal/routersource/source.go
+      Literal Go source to write to internal/routersource/source/source.go
       before building, for callers that want to inline a small custom
       router instead of checking out a separate file. Mutually exclusive
       with source-file.
@@ -91,7 +92,7 @@ runs:
       if: ${{ inputs.source-file != '' }}
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: cp "${{ inputs.source-file }}" internal/routersource/source.go
+      run: cp "${{ inputs.source-file }}" internal/routersource/source/source.go
 
     - name: Write the router source
       if: ${{ inputs.source-content != '' }}
@@ -99,7 +100,7 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         SOURCE_CONTENT: ${{ inputs.source-content }}
-      run: printf '%s\n' "$SOURCE_CONTENT" >internal/routersource/source.go
+      run: printf '%s\n' "$SOURCE_CONTENT" >internal/routersource/source/source.go
 
     - name: Tidy and verify the shell builds against the dropped-in router
       if: ${{ inputs.source-file != '' || inputs.source-content != '' }}
