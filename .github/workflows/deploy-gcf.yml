@@ -78,9 +78,13 @@ on:
         type: string
         default: "1"
       available_memory:
-        description: Memory allotted per instance, e.g. "256Mi".
+        description: >-
+          Memory allotted per instance, e.g. "128Mi". 128Mi is Cloud
+          Functions Gen 2's minimum; CPU isn't set explicitly, so
+          gcloud auto-assigns the smallest tier that pairs with
+          whatever memory you give it.
         type: string
-        default: 256Mi
+        default: 128Mi
       timeout_seconds:
         description: Per-request timeout, in seconds.
         type: string
