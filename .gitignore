@@ -1,3 +1,11 @@
 /.tmp/
 localserve.log
 localserve.pid
+
+# Terraform: no backend is configured, so state stays local to
+# whichever run created it - never meant to be committed.
+terraform/.build/
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/.terraform.lock.hcl

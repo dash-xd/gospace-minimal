@@ -1,0 +1,124 @@
+name: Deploy to Cloud Functions Gen 2
+
+# This repo has no Workload Identity Federation trust relationship of
+# its own. This is a reusable workflow so a repo that *does* have one
+# can call it - the OIDC token minted for the `google-github-actions/auth`
+# step below is attributed to the caller (via its job_workflow_ref), so
+# the WIF provider's attribute condition should match the caller's repo,
+# not dash-xd/gospace-minimal. The caller is responsible for granting
+# `permissions: id-token: write` on the job that calls this workflow.
+#
+# Because the caller's repo isn't necessarily this one, actions/checkout
+# below explicitly checks out dash-xd/gospace-minimal at
+# github.workflow_sha - the commit that defines *this* workflow file -
+# rather than relying on the default (which would check out the
+# caller's own repo instead).
+on:
+  workflow_call:
+    inputs:
+      workload_identity_provider:
+        description: >-
+          Full resource name of the WIF provider trusting the calling
+          repo, e.g.
+          projects/123/locations/global/workloadIdentityPools/pool/providers/provider.
+        type: string
+        required: true
+      service_account:
+        description: Email of the GCP service account to impersonate via WIF.
+        type: string
+        required: true
+      project_id:
+        description: GCP project to deploy into.
+        type: string
+        required: true
+      region:
+        description: GCP region for the function.
+        type: string
+        default: us-central1
+      function_name:
+        description: >-
+          Name of the Cloud Function (2nd gen). This workflow keeps no
+          Terraform state between runs, so a name already in use in the
+          project fails the deploy with Terraform's own
+          resource-already-exists error rather than reconciling it.
+        type: string
+        required: true
+      source_bucket:
+        description: >-
+          Existing GCS bucket to stage the function's source zip in.
+          Must already exist and be readable by Cloud Build - this
+          workflow does not create or manage it.
+        type: string
+        required: true
+      service_account_email:
+        description: >-
+          Runtime service account for the deployed function. Empty uses
+          the project's default compute service account.
+        type: string
+        default: ""
+      allow_unauthenticated:
+        description: Grant public (unauthenticated) invocation.
+        type: boolean
+        default: false
+      source-file:
+        description: >-
+          Passed through to the router action: path (within the
+          gospace-minimal checkout) to a custom
+          internal/routersource/source/source.go to drop in before
+          deploying. Mutually exclusive with source-content.
+        type: string
+        default: ""
+      source-content:
+        description: >-
+          Passed through to the router action: inline Go source to drop
+          in before deploying. Mutually exclusive with source-file.
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out gospace-minimal
+        uses: actions/checkout@v4
+        with:
+          repository: dash-xd/gospace-minimal
+          ref: ${{ github.workflow_sha }}
+
+      - name: Authenticate to Google Cloud via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.workload_identity_provider }}
+          service_account: ${{ inputs.service_account }}
+
+      - name: Prepare the router source
+        uses: ./.github/actions/router
+        with:
+          source-file: ${{ inputs.source-file }}
+          source-content: ${{ inputs.source-content }}
+          build: "false"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init -input=false
+
+      - name: Terraform apply
+        working-directory: terraform
+        env:
+          TF_VAR_project_id: ${{ inputs.project_id }}
+          TF_VAR_region: ${{ inputs.region }}
+          TF_VAR_function_name: ${{ inputs.function_name }}
+          TF_VAR_source_dir: ${{ github.workspace }}
+          TF_VAR_source_bucket: ${{ inputs.source_bucket }}
+          TF_VAR_service_account_email: ${{ inputs.service_account_email }}
+          TF_VAR_allow_unauthenticated: ${{ inputs.allow_unauthenticated }}
+        run: terraform apply -auto-approve -input=false

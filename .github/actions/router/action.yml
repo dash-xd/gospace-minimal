@@ -1,12 +1,12 @@
 name: Router
 description: >-
   Points this shell's router at a custom implementation by overwriting
-  internal/routersource/source/source.go before building, then optionally runs
-  the prepped function.Main locally over plain HTTP (cmd/localserve),
-  without the GCP Cloud Functions buildpack/Functions Framework. Pair
-  run-local with the run-local-stop action once done with it. Leave both
-  source-file and source-content empty to build the checked-in default
-  (a stdlib mux with just a health check) unchanged.
+  internal/routersource/source/source.go, then (unless build is "false")
+  builds .tmp/bin/localserve and optionally runs it locally over plain
+  HTTP, without the GCP Cloud Functions buildpack/Functions Framework.
+  Pair run-local with the run-local-stop action once done with it. Leave
+  both source-file and source-content empty to use the checked-in
+  default (a stdlib mux with just a health check) unchanged.
 
 inputs:
   source-file:
@@ -28,6 +28,15 @@ inputs:
       with source-file.
     required: false
     default: ""
+  build:
+    description: >-
+      Build .tmp/bin/localserve locally after preparing the router.
+      Skip this (set to "false") for a target that builds from source
+      itself and only needs the router dropped in - e.g. Cloud
+      Functions Gen 2's buildpack. Must stay "true" (the default) when
+      run-local is "true", since there'd be nothing to run otherwise.
+    required: false
+    default: "true"
   run-local:
     description: >-
       After preparing the router, also start it locally in the
@@ -87,6 +96,10 @@ runs:
           echo "::error::source-file and source-content are mutually exclusive"
           exit 1
         fi
+        if [[ "${{ inputs.run-local }}" == "true" && "${{ inputs.build }}" == "false" ]]; then
+          echo "::error::run-local requires build (there'd be nothing to run)"
+          exit 1
+        fi
 
     - name: Drop in the router source
       if: ${{ inputs.source-file != '' }}
@@ -102,13 +115,13 @@ runs:
         SOURCE_CONTENT: ${{ inputs.source-content }}
       run: printf '%s\n' "$SOURCE_CONTENT" >internal/routersource/source/source.go
 
-    - name: Tidy and build localserve
+    - name: Tidy modules
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      # cmd/localserve pulls in the entire graph this shell builds
-      # (function -> routersource/serve -> routersource/source), so
-      # building it is also how this step verifies the shell as a
-      # whole - there's nothing else to separately go-build.
+      # Needed even when build is "false": go.sum has to reflect
+      # whatever the dropped-in source.go newly imports, since a
+      # server-side build (e.g. Cloud Functions Gen 2's buildpack)
+      # reads go.sum too.
       #
       # GOPROXY=direct: a dropped-in source.go often imports a package
       # at its latest untagged commit. proxy.golang.org caches that
@@ -123,6 +136,17 @@ runs:
       run: |
         set -euo pipefail
         go mod tidy
+
+    - name: Build localserve
+      if: ${{ inputs.build != 'false' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # cmd/localserve pulls in the entire graph this shell builds
+      # (function -> routersource/serve -> routersource/source), so
+      # building it is also how this step verifies the shell as a
+      # whole - there's nothing else to separately go-build.
+      run: |
+        set -euo pipefail
         mkdir -p .tmp/bin
         go build -o .tmp/bin/localserve ./cmd/localserve
 
