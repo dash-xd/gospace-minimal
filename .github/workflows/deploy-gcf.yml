@@ -39,15 +39,8 @@ on:
         description: >-
           Name of the Cloud Function (2nd gen). This workflow keeps no
           Terraform state between runs, so a name already in use in the
-          project fails the deploy with Terraform's own
-          resource-already-exists error rather than reconciling it.
-        type: string
-        required: true
-      source_bucket:
-        description: >-
-          Existing GCS bucket to stage the function's source zip in.
-          Must already exist and be readable by Cloud Build - this
-          workflow does not create or manage it.
+          project fails the deploy instead of reconciling it - see
+          terraform/main.tf.
         type: string
         required: true
       service_account_email:
@@ -95,6 +88,9 @@ jobs:
           workload_identity_provider: ${{ inputs.workload_identity_provider }}
           service_account: ${{ inputs.service_account }}
 
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
       - name: Prepare the router source
         uses: ./.github/actions/router
         with:
@@ -118,7 +114,6 @@ jobs:
           TF_VAR_region: ${{ inputs.region }}
           TF_VAR_function_name: ${{ inputs.function_name }}
           TF_VAR_source_dir: ${{ github.workspace }}
-          TF_VAR_source_bucket: ${{ inputs.source_bucket }}
           TF_VAR_service_account_email: ${{ inputs.service_account_email }}
           TF_VAR_allow_unauthenticated: ${{ inputs.allow_unauthenticated }}
         run: terraform apply -auto-approve -input=false

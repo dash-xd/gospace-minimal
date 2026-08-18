@@ -13,26 +13,30 @@ variable "function_name" {
   description = <<-EOT
     Name of the Cloud Function (2nd gen) to create. Since this config
     keeps no state between runs, a name already in use in the project
-    makes this apply fail with Terraform's own resource-already-exists
-    error - pick a name you know is free, or one meant to be unique
-    per deploy.
+    makes this apply fail (see main.tf) - pick a name you know is
+    free, or one meant to be unique per deploy.
   EOT
   type        = string
 }
 
 variable "source_dir" {
-  description = "Local path to the repo checkout to zip and deploy as the function's source."
+  description = <<-EOT
+    Local path to the already-checked-out repo to deploy as-is. gcloud
+    stages and uploads it itself - this config does not zip or manage
+    a GCS object for it.
+  EOT
   type        = string
 }
 
-variable "source_bucket" {
+variable "entry_point_dir" {
   description = <<-EOT
-    Name of an existing GCS bucket to stage the source zip in. Must
-    already exist and be readable by Cloud Build - this config does not
-    create or manage it, so re-running against the same bucket never
-    conflicts.
+    Path, relative to source_dir, of the package containing
+    entry_point - passed to the buildpack via the
+    GOOGLE_FUNCTION_SOURCE build environment variable, since
+    entry_point lives under internal/ rather than at the module root.
   EOT
   type        = string
+  default     = "internal/function"
 }
 
 variable "runtime" {
