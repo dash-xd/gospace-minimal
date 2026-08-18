@@ -13,6 +13,12 @@ name: Deploy to Cloud Functions Gen 2
 # github.workflow_sha - the commit that defines *this* workflow file -
 # rather than relying on the default (which would check out the
 # caller's own repo instead).
+#
+# No Terraform: `gcloud functions deploy --source` already stages and
+# uploads a local directory itself, which is all this needs - adding
+# Terraform on top would only be there to shell out to the same gcloud
+# command (there's no Terraform resource that accepts a local source
+# path), so it'd be a dependency buying nothing.
 on:
   workflow_call:
     inputs:
@@ -37,25 +43,52 @@ on:
         default: us-central1
       function_name:
         description: >-
-          Name of the Cloud Function (2nd gen). This workflow keeps no
-          Terraform state between runs, so a name already in use in the
-          project fails the deploy with Terraform's own
-          resource-already-exists error rather than reconciling it.
+          Name of the Cloud Function (2nd gen) to create. This workflow
+          keeps no record of past deploys, so a name already in use in
+          the project fails the deploy (see the conflict check below)
+          instead of updating it - pick a name you know is free, or one
+          meant to be unique per deploy.
         type: string
         required: true
-      source_bucket:
+      entry_point:
+        description: Exported function/handler name the buildpack invokes.
+        type: string
+        default: Main
+      entry_point_dir:
         description: >-
-          Existing GCS bucket to stage the function's source zip in.
-          Must already exist and be readable by Cloud Build - this
-          workflow does not create or manage it.
+          Path, relative to the repo root, of the package containing
+          entry_point - passed to the buildpack via the
+          GOOGLE_FUNCTION_SOURCE build environment variable, since the
+          entry point lives under internal/ rather than at the module
+          root.
         type: string
-        required: true
+        default: internal/function
+      runtime:
+        description: Cloud Functions Go runtime to build with.
+        type: string
+        default: go122
       service_account_email:
         description: >-
           Runtime service account for the deployed function. Empty uses
           the project's default compute service account.
         type: string
         default: ""
+      max_instance_count:
+        description: Maximum concurrent instances.
+        type: string
+        default: "1"
+      available_memory:
+        description: Memory allotted per instance, e.g. "256Mi".
+        type: string
+        default: 256Mi
+      timeout_seconds:
+        description: Per-request timeout, in seconds.
+        type: string
+        default: "60"
+      ingress_settings:
+        description: One of ALLOW_ALL, ALLOW_INTERNAL_ONLY, ALLOW_INTERNAL_AND_GCLB.
+        type: string
+        default: ALLOW_ALL
       allow_unauthenticated:
         description: Grant public (unauthenticated) invocation.
         type: boolean
@@ -95,6 +128,9 @@ jobs:
           workload_identity_provider: ${{ inputs.workload_identity_provider }}
           service_account: ${{ inputs.service_account }}
 
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
       - name: Prepare the router source
         uses: ./.github/actions/router
         with:
@@ -102,23 +138,57 @@ jobs:
           source-content: ${{ inputs.source-content }}
           build: "false"
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-
-      - name: Terraform init
-        working-directory: terraform
-        run: terraform init -input=false
-
-      - name: Terraform apply
-        working-directory: terraform
+      - name: Deploy
         env:
-          TF_VAR_project_id: ${{ inputs.project_id }}
-          TF_VAR_region: ${{ inputs.region }}
-          TF_VAR_function_name: ${{ inputs.function_name }}
-          TF_VAR_source_dir: ${{ github.workspace }}
-          TF_VAR_source_bucket: ${{ inputs.source_bucket }}
-          TF_VAR_service_account_email: ${{ inputs.service_account_email }}
-          TF_VAR_allow_unauthenticated: ${{ inputs.allow_unauthenticated }}
-        run: terraform apply -auto-approve -input=false
+          PROJECT_ID: ${{ inputs.project_id }}
+          REGION: ${{ inputs.region }}
+          FUNCTION_NAME: ${{ inputs.function_name }}
+          ENTRY_POINT: ${{ inputs.entry_point }}
+          ENTRY_POINT_DIR: ${{ inputs.entry_point_dir }}
+          RUNTIME: ${{ inputs.runtime }}
+          SERVICE_ACCOUNT_EMAIL: ${{ inputs.service_account_email }}
+          MAX_INSTANCE_COUNT: ${{ inputs.max_instance_count }}
+          AVAILABLE_MEMORY: ${{ inputs.available_memory }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          INGRESS_SETTINGS: ${{ inputs.ingress_settings }}
+          ALLOW_UNAUTHENTICATED: ${{ inputs.allow_unauthenticated }}
+        run: |
+          set -euo pipefail
+
+          # This workflow keeps no record of past deploys, so it can't
+          # tell "already deployed, update it" from "never deployed,
+          # create it" the way a normal `gcloud functions deploy`
+          # re-run would - deploy is inherently an upsert. Check first
+          # and fail outright on a name already in use, rather than
+          # silently reconciling it.
+          if gcloud functions describe "$FUNCTION_NAME" --gen2 \
+              --project="$PROJECT_ID" --region="$REGION" \
+              >/dev/null 2>&1; then
+            echo "::error::function '$FUNCTION_NAME' already exists in $PROJECT_ID/$REGION - this workflow only ever creates a function, never updates one. Deploy under a name that's free, or delete the existing function first."
+            exit 1
+          fi
+
+          allow_flag="--no-allow-unauthenticated"
+          if [[ "$ALLOW_UNAUTHENTICATED" == "true" ]]; then
+            allow_flag="--allow-unauthenticated"
+          fi
+
+          service_account_flag=()
+          if [[ -n "$SERVICE_ACCOUNT_EMAIL" ]]; then
+            service_account_flag=(--service-account="$SERVICE_ACCOUNT_EMAIL")
+          fi
+
+          gcloud functions deploy "$FUNCTION_NAME" --gen2 --quiet \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --runtime="$RUNTIME" \
+            --entry-point="$ENTRY_POINT" \
+            --source=. \
+            --set-build-env-vars="GOOGLE_FUNCTION_SOURCE=$ENTRY_POINT_DIR" \
+            --trigger-http \
+            --max-instances="$MAX_INSTANCE_COUNT" \
+            --memory="$AVAILABLE_MEMORY" \
+            --timeout="$TIMEOUT_SECONDS" \
+            --ingress-settings="$INGRESS_SETTINGS" \
+            "$allow_flag" \
+            "${service_account_flag[@]}"

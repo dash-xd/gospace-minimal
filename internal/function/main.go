@@ -4,6 +4,12 @@
 // routersource/serve wrapper below, which in turn calls
 // routersource/source - the one file a deploy step drops in to target a
 // specific repo.
+//
+// It's not package main - Cloud Functions' Go buildpack generates its
+// own main() and invokes Main by reflection - so it lives under
+// internal/ like the rest of this shell's implementation rather than
+// cmd/. The deploy config points the buildpack at this directory via
+// the GOOGLE_FUNCTION_SOURCE build environment variable.
 package function
 
 import (

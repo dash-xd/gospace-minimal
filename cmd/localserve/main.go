@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	function "github.com/dash-xd/gospace-minimal/function"
+	function "github.com/dash-xd/gospace-minimal/internal/function"
 )
 
 func main() {
