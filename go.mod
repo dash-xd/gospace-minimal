@@ -1,3 +1,3 @@
 module github.com/dash-xd/gospace-minimal
 
-go 1.22
+go 1.26
