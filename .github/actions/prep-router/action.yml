@@ -131,9 +131,22 @@ runs:
         GOPROXY: direct
       run: go get "${{ inputs.router-package }}@${{ inputs.router-version }}"
 
+    # Fully qualified rather than a local `./.github/actions/router`
+    # reference: a local relative `uses:` always resolves against
+    # GITHUB_WORKSPACE - the *calling workflow's* checkout - not against
+    # the repo that hosts the composite action currently running. When a
+    # caller like huram-abi's deploy-device-auth-router invokes this
+    # action via `dash-xd/gospace-minimal/.github/actions/prep-router@main`,
+    # GITHUB_WORKSPACE is huram-abi's own checkout, which has no
+    # .github/actions/router at all - a local reference here fails with
+    # "Can't find 'action.yml' ... under .../huram-abi/.github/actions/router".
+    # Pinned to @main for the same reason deploy-device-auth-router pins
+    # its own reference to this action: a composite step's `uses:`
+    # doesn't support the inputs context, so it can't be tied to
+    # whatever ref prep-router itself was invoked at.
     - name: Drop in the generated adapter and build/run via the router action
       id: router
-      uses: ./.github/actions/router
+      uses: dash-xd/gospace-minimal/.github/actions/router@main
       with:
         source-file: .tmp-prep-router-source.go
         build: ${{ inputs.build }}
