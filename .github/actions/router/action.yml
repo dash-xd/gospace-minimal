@@ -123,16 +123,29 @@ runs:
       # server-side build (e.g. Cloud Functions Gen 2's buildpack)
       # reads go.sum too.
       #
-      # GOPROXY=direct: a dropped-in source.go often imports a package
-      # at its latest untagged commit. proxy.golang.org caches that
-      # resolution, so a build run shortly after a fresh push can
-      # otherwise silently get a stale commit even though the real repo
-      # has already moved. Going direct to the VCS host for this step
-      # avoids that; GOSUMDB checksum verification still applies since
+      # GOPROXY="https://proxy.golang.org,direct" (not bare "direct"): a
+      # dropped-in source.go often imports a package at its latest
+      # untagged commit, and proxy.golang.org's cached @latest answer
+      # for that can briefly lag a fresh push - going direct to the VCS
+      # host for *that* resolution avoids serving a stale commit.
+      # GOSUMDB checksum verification still applies either way, since
       # it's keyed by exact version, not by the ambiguous "latest"
-      # pointer, so this doesn't weaken that.
+      # pointer.
+      #
+      # Bare "direct" previously forced *every* module in the whole
+      # dependency graph through a direct VCS fetch, not just the
+      # newly-added one - including incidental transitive/test-only
+      # dependencies (e.g. a vanity-import host like gonum.org, pulled
+      # in only because some dependency's tests import it under old,
+      # unpruned module graph rules). Those direct fetches have no
+      # module-proxy mirror or CDN backing them, and one going
+      # unreachable/slow from a given runner hung this step for 18+
+      # minutes before failing outright. Falling back to the normal
+      # proxy chain first - and only going direct on an actual miss -
+      # keeps that reliability for the rest of the graph while still
+      # covering the one case this was meant to fix.
       env:
-        GOPROXY: ${{ (inputs.source-file != '' || inputs.source-content != '') && 'direct' || '' }}
+        GOPROXY: ${{ (inputs.source-file != '' || inputs.source-content != '') && 'https://proxy.golang.org,direct' || '' }}
       run: |
         set -euo pipefail
         go mod tidy

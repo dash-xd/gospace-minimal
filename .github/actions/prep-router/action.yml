@@ -123,12 +123,19 @@ runs:
       if: ${{ inputs.router-version != '' }}
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      # GOPROXY=direct for the same reason as the router action's own
-      # tidy step: proxy.golang.org can otherwise serve a stale
-      # resolution for a version/commit that only just became
-      # resolvable.
+      # Same GOPROXY reasoning as the router action's own tidy step:
+      # try the normal proxy chain first (reliable, cached - covers the
+      # rest of the dependency graph, including unrelated
+      # transitive/test-only imports that have nothing to do with
+      # router-version), and only fall through to a direct VCS fetch
+      # for whatever the proxy doesn't yet have - e.g. a commit/tag
+      # that only became resolvable moments ago. A bare "direct" here
+      # would force the *entire* graph through direct fetches instead,
+      # which is what caused a real 18+ minute hang/failure on an
+      # unrelated vanity-import host (gonum.org) pulled in only via a
+      # dependency's test-only imports.
       env:
-        GOPROXY: direct
+        GOPROXY: https://proxy.golang.org,direct
       run: go get "${{ inputs.router-package }}@${{ inputs.router-version }}"
 
     # Fully qualified rather than a local `./.github/actions/router`
