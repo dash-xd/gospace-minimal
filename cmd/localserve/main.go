@@ -15,11 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	// Import path is the module root, not a subpackage: function.go
-	// lives there now, not under internal/ - see its doc comment for
-	// why. Aliased since the module path's last element
-	// ("gospace-minimal") doesn't match the package's declared name.
-	function "github.com/dash-xd/gospace-minimal"
+	function "github.com/dash-xd/gospace-minimal/internal/function"
 )
 
 func main() {
