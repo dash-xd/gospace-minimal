@@ -6,10 +6,16 @@
 // specific repo.
 //
 // It's not package main - Cloud Functions' Go buildpack generates its
-// own main() and invokes Main by reflection - so it lives under
-// internal/ like the rest of this shell's implementation rather than
-// cmd/. The deploy config points the buildpack at this directory via
-// the GOOGLE_FUNCTION_SOURCE build environment variable.
+// own main() and invokes Main by reflection.
+//
+// It lives at the module root (not under internal/, where it used to
+// live) because that's where a deployed build actually needs it: the
+// Go functions_framework buildpack (as of writing - see
+// github.com/GoogleCloudPlatform/buildpacks/blob/main/cmd/go/functions_framework/lib/lib.go)
+// discovers the target package by parsing whatever .go files sit
+// directly at the root of the uploaded source, and never actually
+// reads GOOGLE_FUNCTION_SOURCE despite it being documented as
+// buildpack-agnostic - a subdirectory would be invisible to it.
 package function
 
 import (
